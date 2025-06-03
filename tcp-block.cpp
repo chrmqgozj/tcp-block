@@ -128,8 +128,8 @@ void send_backward_packet(struct libnet_ipv4_hdr* iphdr, struct libnet_tcp_hdr* 
 
 	struct sockaddr_in address;
 	address.sin_family = AF_INET;
-	address.sin_port = tcphdr->th_sport;
-	address.sin_addr.s_addr = iphdr->ip_src.s_addr;
+	address.sin_port = new_tcphdr->th_dport;
+	address.sin_addr.s_addr = new_iphdr->ip_dst.s_addr;
 
 	if (sendto(sd, packet, packet_len, 0, (struct sockaddr *)&address, sizeof(address)) < 0) {
 		fprintf(stderr, "Failed to send backward packet\n");
