@@ -81,7 +81,7 @@ void send_backward_packet(pcap_t* pcap, struct libnet_ethernet_hdr *eth_hdr, str
 	tcp_hl = (tcp_hdr -> th_off) * 4;
 
 	// raw socket
-	int sd = socket(AF_INET, SOCK_RAW, IPPROTO_RAW);
+	int sd = socket(AF_INET, SOCK_RAW, IPPROTO_TCP);
 	if (sd == -1) {
 		fprintf(stderr, "socket open error\n");
 		return;
@@ -137,7 +137,7 @@ void send_backward_packet(pcap_t* pcap, struct libnet_ethernet_hdr *eth_hdr, str
 	// send through socket
 	struct sockaddr_in address;
 	address.sin_family = AF_INET;
-	address.sin_port = 0;
+	address.sin_port = new_tcp->th_dport;
 	address.sin_addr.s_addr = new_ipv4->ip_dst.s_addr;
 
 	int ret = sendto(sd, packet, sizeof(packet), 0x0, (struct sockaddr *)&address, sizeof(address));
