@@ -109,6 +109,8 @@ void send_backward_packet(pcap_t* pcap, struct libnet_ethernet_hdr *eth_hdr, str
 	new_tcp->th_seq = tcp_hdr->th_ack;
 	new_tcp->th_ack = htonl(ntohl(tcp_hdr->th_seq) + data_len); 
 	new_tcp->th_flags = TH_ACK | TH_FIN;
+	new_tcp->th_win = htons(60000);
+	new_tcp->th_off = tcp_hl / 4;
 	//new_tcp->th_flags = TH_ACK | TH_PUSH | TH_FIN;
 	//new_tcp->th_flags = TH_ACK | TH_PUSH;
 
@@ -134,7 +136,7 @@ void send_backward_packet(pcap_t* pcap, struct libnet_ethernet_hdr *eth_hdr, str
 	struct sockaddr_in address;
 	address.sin_family = AF_INET;
 	address.sin_port = 0;
-	address.sin_addr.s_addr = new_ipv4->ip_src.s_addr;
+	address.sin_addr.s_addr = new_ipv4->ip_dst.s_addr;
 
 	int ret = sendto(sd, packet, sizeof(packet), 0x0, (struct sockaddr *)&address, sizeof(address));
 	if (ret < 0) {
