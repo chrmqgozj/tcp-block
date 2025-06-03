@@ -27,20 +27,24 @@ unsigned short checksum(unsigned short *buffer, int size){
 }
 
 // send packet to server (forward)
-void send_forward_packet(pcap_t* pcap, struct libnet_ethernet_hdr *eth_hdr, struct libnet_ipv4_hdr *ipv4_hdr, struct libnet_tcp_hdr *tcp_hdr, int data_len) {
+void send_forward_packet(pcap_t* pcap, struct libnet_ethernet_hdr *eth_hdr, struct libnet_ipv4_hdr *ipv4_hdr, struct libnet_tcp_hdr *tcp_hdr, int data_len, uint8_t* my_mac) {
 	int eth_hl, ipv4_hl, tcp_hl;
 	eth_hl = LIBNET_ETH_H;
 	ipv4_hl = (ipv4_hdr -> ip_hl) * 4;
 	tcp_hl = (tcp_hdr -> th_off) * 4;
 
 	u_char packet[eth_hl + ipv4_hl + tcp_hl];
-        memset(packet, 0, sizeof(packet));
+	memset(packet, 0, sizeof(packet));
 
 	struct libnet_ethernet_hdr* new_eth = (struct libnet_ethernet_hdr*)packet;
-	memcpy(new_eth, eth_hdr, eth_hl);
+	memcpy(new_eth, eth_hdr, eth_hl); 
+	memcpy(new_eth->ether_shost, my_mac, ETHER_ADDR_LEN);
 
 	struct libnet_ipv4_hdr* new_ipv4 = (struct libnet_ipv4_hdr*)(packet + eth_hl);
 	memcpy(new_ipv4, ipv4_hdr, ipv4_hl);
+	new_ipv4->ip_len = htons(ipv4_hl + tcp_hl);
+	new_ipv4->ip_sum = 0;
+	new_ipv4->ip_sum = checksum((unsigned short*)new_ipv4, ipv4_hl);
 
 	// tcp rst packet
 	struct libnet_tcp_hdr* new_tcp = (struct libnet_tcp_hdr*)(packet + eth_hl + ipv4_hl);
@@ -71,8 +75,8 @@ void send_backward_packet(pcap_t* pcap, struct libnet_ethernet_hdr *eth_hdr, str
 	int payload_len = strlen(warning);
 
 	int ipv4_hl, tcp_hl;
-        ipv4_hl = (ipv4_hdr -> ip_hl) * 4;
-        tcp_hl = (tcp_hdr -> th_off) * 4;
+	ipv4_hl = (ipv4_hdr -> ip_hl) * 4;
+	tcp_hl = (tcp_hdr -> th_off) * 4;
 
 	// raw socket
 	int sd = socket(AF_INET, SOCK_RAW, IPPROTO_RAW);
@@ -93,6 +97,7 @@ void send_backward_packet(pcap_t* pcap, struct libnet_ethernet_hdr *eth_hdr, str
 	new_ipv4->ip_src = ipv4_hdr->ip_dst;
 	new_ipv4->ip_dst = ipv4_hdr->ip_src;
 	new_ipv4->ip_len = htons(ipv4_hl + tcp_hl + payload_len);
+	new_ipv4->ip_ttl = 128;
 	new_ipv4->ip_sum = 0;
 	new_ipv4->ip_sum = checksum((unsigned short*)new_ipv4, ipv4_hl);
 
@@ -104,6 +109,9 @@ void send_backward_packet(pcap_t* pcap, struct libnet_ethernet_hdr *eth_hdr, str
 	new_tcp->th_seq = tcp_hdr->th_ack;
 	new_tcp->th_ack = htonl(ntohl(tcp_hdr->th_seq) + data_len); 
 	new_tcp->th_flags = TH_ACK | TH_FIN;
+	//new_tcp->th_flags = TH_ACK | TH_PUSH | TH_FIN;
+	//new_tcp->th_flags = TH_ACK | TH_PUSH;
+
 	new_tcp->th_sum = 0;
 
 	// add warning payload
@@ -111,16 +119,16 @@ void send_backward_packet(pcap_t* pcap, struct libnet_ethernet_hdr *eth_hdr, str
 
 	// calculate tcp checksum
 	u_char pseudo_hdr[12 + tcp_hl + payload_len];
-        memcpy(pseudo_hdr, &new_ipv4->ip_src.s_addr, 4);
-        memcpy(pseudo_hdr + 4, &new_ipv4->ip_dst.s_addr, 4);
-        pseudo_hdr[8] = 0;
-        memcpy(pseudo_hdr + 9, &new_ipv4->ip_p, 1);
-        unsigned short tcp_len = htons(tcp_hl + payload_len);
-        memcpy(pseudo_hdr + 10, &tcp_len, 2);
-        memcpy(pseudo_hdr + 12, new_tcp, tcp_hl);
+	memcpy(pseudo_hdr, &new_ipv4->ip_src.s_addr, 4);
+	memcpy(pseudo_hdr + 4, &new_ipv4->ip_dst.s_addr, 4);
+	pseudo_hdr[8] = 0;
+	memcpy(pseudo_hdr + 9, &new_ipv4->ip_p, 1);
+	unsigned short tcp_len = htons(tcp_hl + payload_len);
+	memcpy(pseudo_hdr + 10, &tcp_len, 2);
+	memcpy(pseudo_hdr + 12, new_tcp, tcp_hl);
 	memcpy(pseudo_hdr + 12 + tcp_hl, warning, payload_len);
 
-        new_tcp->th_sum = checksum((unsigned short*)pseudo_hdr, 12 + tcp_hl + payload_len);
+	new_tcp->th_sum = checksum((unsigned short*)pseudo_hdr, 12 + tcp_hl + payload_len);
 
 	// send through socket
 	struct sockaddr_in address;
@@ -145,6 +153,23 @@ int main(int argc, char* argv[]) {
 	char* dev = argv[1];
 	char* pattern = argv[2];
 	char errbuf[PCAP_ERRBUF_SIZE];
+	uint8_t mac[6];
+
+	libnet_t* ln = libnet_init(LIBNET_LINK, dev, NULL);
+	if (ln == NULL) {
+		fprintf(stderr, "libnet_init failed\n");
+		libnet_destroy(ln);
+		return -1;
+	}
+
+	struct libnet_ether_addr* my_mac = libnet_get_hwaddr(ln);
+	if (my_mac == NULL) {
+		fprintf(stderr, "libnet_get_hwaddr failed\n");
+		libnet_destroy(ln);
+		return -1;
+	}
+
+	memcpy(mac, my_mac->ether_addr_octet, 6);
 
 	pcap_t* pcap = pcap_open_live(dev, BUFSIZ, 1, 1, errbuf);
 	if (pcap == NULL) {
@@ -171,24 +196,30 @@ int main(int argc, char* argv[]) {
 
 		struct libnet_ipv4_hdr *ipv4_header = (struct libnet_ipv4_hdr *)(packet + LIBNET_ETH_H);
 		ipv4_hl = (ipv4_header -> ip_hl) * 4;
-		
+
 		struct libnet_tcp_hdr *tcp_header = (struct libnet_tcp_hdr *)(packet + LIBNET_ETH_H + ipv4_hl);
 		tcp_hl = (tcp_header -> th_off) * 4;
-		
+
 		const char* data = (const char *)(packet + LIBNET_ETH_H + ipv4_hl + tcp_hl);
 		int data_len = ntohs(ipv4_header->ip_len) - ipv4_hl - tcp_hl;
-		
+
 		if (data_len > 0) {
 			if(strncmp(data, "GET", 3) == 0){
 				if(memmem(data, data_len, pattern, strlen(pattern)) != NULL){
 					printf("Harmful!\n");
-					send_forward_packet(pcap, eth_header, ipv4_header, tcp_header, data_len);
+					/*
+					send_forward_packet(pcap, eth_header, ipv4_header, tcp_header, data_len, mac);
 					send_backward_packet(pcap, eth_header, ipv4_header, tcp_header, data_len);
+					*/
+					send_backward_packet(pcap, eth_header, ipv4_header, tcp_header, data_len);
+					send_forward_packet(pcap, eth_header, ipv4_header, tcp_header, data_len, mac);
+					
 				}
 			}
 		}
 	}
 
+	libnet_destroy(ln);
 	pcap_close(pcap);
 	return 0;
 }
