@@ -51,6 +51,8 @@ void send_forward_packet(pcap_t* pcap, struct libnet_ethernet_hdr *eth_hdr, stru
 	memcpy(new_tcp, tcp_hdr, tcp_hl);
 	new_tcp->th_flags = TH_ACK | TH_RST;
 	new_tcp->th_seq = htonl(ntohl(tcp_hdr->th_seq) + data_len);
+	new_tcp->th_win = htons(60000);
+        new_tcp->th_off = tcp_hl / 4;
 	new_tcp->th_sum = 0;
 
 	// calculate tcp checksum
