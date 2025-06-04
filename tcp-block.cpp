@@ -11,6 +11,7 @@ void usage() {
 	printf("sample : tcp-block wlan0 \"Host: test.gilgil.net\"\n");
 }
 
+// checksum calculate
 unsigned short checksum(unsigned short *buffer, int size){
 	unsigned long cksum=0;
 	while(size >1) {
@@ -27,19 +28,24 @@ unsigned short checksum(unsigned short *buffer, int size){
 
 // send packet to server (forward)
 void send_forward_packet(pcap_t* pcap, const u_char* org_packet, struct libnet_ipv4_hdr* iphdr, struct libnet_tcp_hdr* tcphdr, int data_len, uint8_t* my_mac) {
+	// length of each section
 	int ethdr_len, iphdr_len, tcphdr_len, packet_len;
 	ethdr_len = LIBNET_ETH_H;
 	iphdr_len = (iphdr -> ip_hl) * 4;
 	tcphdr_len = (tcphdr -> th_off) * 4;
 	packet_len = LIBNET_ETH_H + iphdr_len + tcphdr_len;
 
+	// packet to send
 	u_char packet[packet_len];
 	memset(packet, 0, packet_len);
 	memcpy(packet, org_packet, packet_len);
 
+	// ethernet header
 	struct libnet_ethernet_hdr* ethdr = (struct libnet_ethernet_hdr*)packet;
+	// change source mac
 	memcpy(ethdr->ether_shost, my_mac, ETHER_ADDR_LEN);
 
+	// ipv4 header
 	struct libnet_ipv4_hdr* new_iphdr = (struct libnet_ipv4_hdr*)(packet + ethdr_len);
 	new_iphdr->ip_len = htons(iphdr_len + tcphdr_len);
 	new_iphdr->ip_sum = 0;
@@ -47,6 +53,7 @@ void send_forward_packet(pcap_t* pcap, const u_char* org_packet, struct libnet_i
 
 	// tcp rst packet
 	struct libnet_tcp_hdr* new_tcphdr = (struct libnet_tcp_hdr*)(packet + ethdr_len + iphdr_len);
+	// change seq number, flag
 	new_tcphdr->th_seq = htonl(ntohl(tcphdr->th_seq) + data_len);
 	new_tcphdr->th_flags = TH_RST | TH_ACK;
 	new_tcphdr->th_sum = 0;
@@ -73,17 +80,20 @@ void send_backward_packet(struct libnet_ipv4_hdr* iphdr, struct libnet_tcp_hdr* 
 	// Fin은 직접 패킷 정보 입력해줘야 무한로딩 안 걸림. 정확한 이유는 모르겠지만 패킷의 어떤 정보가 소켓으로 전송하는 것과 안 맞는듯하다.
 	const char* payload = "HTTP/1.0 302 Redirect\r\nLocation: http://warning.or.kr\r\n\r\n";
 
+	// length of each section
 	int iphdr_len, tcphdr_len, payload_len, packet_len;
 	iphdr_len = (iphdr -> ip_hl) * 4;
 	tcphdr_len = (tcphdr -> th_off) * 4;
 	payload_len = strlen(payload);
 	packet_len = iphdr_len + tcphdr_len + payload_len;
 
+	// packet to send
 	u_char packet[packet_len];
 	memset(packet, 0, packet_len);
 
 	// exchange server <-> client
 	struct libnet_ipv4_hdr* new_iphdr = (struct libnet_ipv4_hdr*)packet;
+	// swap source and destination
 	new_iphdr->ip_src = iphdr->ip_dst;
 	new_iphdr->ip_dst = iphdr->ip_src;
 	new_iphdr->ip_hl = iphdr_len / 4;
@@ -96,12 +106,14 @@ void send_backward_packet(struct libnet_ipv4_hdr* iphdr, struct libnet_tcp_hdr* 
 
 	// exchange server <-> client / tcp fin packet
 	struct libnet_tcp_hdr* new_tcphdr = (struct libnet_tcp_hdr*)(packet + iphdr_len);
+	// swap source and destination
 	new_tcphdr->th_sport = tcphdr->th_dport;
 	new_tcphdr->th_dport = tcphdr->th_sport;
 	new_tcphdr->th_seq = tcphdr->th_ack;
 	new_tcphdr->th_ack = htonl(ntohl(tcphdr->th_seq) + data_len);
 	new_tcphdr->th_flags = TH_FIN | TH_ACK;
 	new_tcphdr->th_off = tcphdr_len / 4;
+	// tcp header window size = 65535
 	new_tcphdr->th_win = htons(60000);
 	new_tcphdr->th_sum = 0;
 
@@ -124,6 +136,7 @@ void send_backward_packet(struct libnet_ipv4_hdr* iphdr, struct libnet_tcp_hdr* 
 	// send through raw socket
 	int sd = socket(AF_INET, SOCK_RAW, IPPROTO_TCP);
 	int on = 1;
+	// IP_HDRINCL: user provided ip header
 	setsockopt(sd, IPPROTO_IP, IP_HDRINCL, (char *)&on, sizeof(on));
 
 	struct sockaddr_in address;
